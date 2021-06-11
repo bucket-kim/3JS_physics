@@ -3,7 +3,6 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import * as dat from "dat.gui";
 import CANNON from "cannon";
-import shape from "@material-ui/core/styles/shape";
 
 /**
  * Debug
@@ -16,6 +15,18 @@ const debugObj = {};
  */
 // Canvas
 const canvas = document.querySelector("canvas.webgl");
+
+// Sound
+const hitSound = new Audio("/sounds/hit.mp3");
+
+const playHitSound = (collision) => {
+  const impactStrength = collision.contact.getImpactVelocityAlongNormal();
+  if (impactStrength > 1.5) {
+    hitSound.volume = Math.random();
+    hitSound.currentTime = 0;
+    hitSound.play();
+  }
+};
 
 // Scene
 const scene = new THREE.Scene();
@@ -37,6 +48,8 @@ const environmentMapTexture = cubeTextureLoader.load([
 
 // Physics
 const world = new CANNON.World();
+world.broadphase = new CANNON.SAPBroadphase(world);
+world.allowSleep = true;
 world.gravity.set(0, -9.82, 0);
 
 const concreteMat = new CANNON.Material("concrete");
@@ -149,18 +162,26 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
 const objectsToSave = [];
 
+const sphereGeo = new THREE.SphereGeometry(1, 20, 20);
+const sphereMat = new THREE.MeshStandardMaterial({
+  metalness: 0.3,
+  roughness: 0.4,
+  envMap: environmentMapTexture,
+});
+
+const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+const boxMat = new THREE.MeshStandardMaterial({
+  metalness: 0.3,
+  roughness: 0.4,
+  envMap: environmentMapTexture,
+});
+
 const createSphere = (radius, position) => {
-  const Mesh = new THREE.Mesh(
-    new THREE.SphereGeometry(radius, 20, 20),
-    new THREE.MeshStandardMaterial({
-      metalness: 0.3,
-      roughness: 0.4,
-      envMap: environmentMapTexture,
-    })
-  );
+  const Mesh = new THREE.Mesh(sphereGeo, sphereMat);
   Mesh.castShadow = true;
   Mesh.position.copy(position);
   scene.add(Mesh);
+  Mesh.scale.set(radius, radius, radius);
 
   const shape = new CANNON.Sphere(radius);
 
@@ -171,16 +192,64 @@ const createSphere = (radius, position) => {
     material: plasticMat,
   });
   body.position.copy(position);
+  body.addEventListener("collide", playHitSound);
+  world.addBody(body);
+
+  objectsToSave.push({ Mesh, body });
+};
+
+const createBox = (width, height, depth, position) => {
+  const Mesh = new THREE.Mesh(boxGeo, boxMat);
+  Mesh.castShadow = true;
+  Mesh.position.copy(position);
+  scene.add(Mesh);
+  Mesh.scale.set(width, height, depth);
+
+  const shape = new CANNON.Box(
+    new CANNON.Vec3(width * 0.5, height * 0.5, depth * 0.5)
+  );
+
+  const body = new CANNON.Body({
+    mass: 1,
+    position: new CANNON.Vec3(0, 3, 0),
+    shape,
+    material: plasticMat,
+  });
+  body.position.copy(position);
+  body.addEventListener("collide", playHitSound);
   world.addBody(body);
 
   objectsToSave.push({ Mesh, body });
 };
 
 debugObj.createSphere = () => {
-  createSphere(0.5, { x: 0, y: 3, z: 0 });
+  createSphere(Math.random() * 0.5, {
+    x: (Math.random() - 0.5) * 3,
+    y: 3,
+    z: (Math.random() - 0.5) * 3,
+  });
+};
+
+debugObj.createBox = () => {
+  createBox(Math.random(), Math.random(), Math.random(), {
+    x: (Math.random() - 0.5) * 3,
+    y: 3,
+    z: (Math.random() - 0.5) * 3,
+  });
+};
+
+debugObj.reset = () => {
+  for (const object of objectsToSave) {
+    object.body.removeEventListener("collide", playHitSound);
+    world.removeBody(object.body);
+
+    scene.remove(object.Mesh);
+  }
 };
 
 gui.add(debugObj, "createSphere");
+gui.add(debugObj, "createBox");
+gui.add(debugObj, "reset");
 
 /**
  * Animate
@@ -201,6 +270,7 @@ const tick = () => {
 
   for (const object of objectsToSave) {
     object.Mesh.position.copy(object.body.position);
+    object.Mesh.quaternion.copy(object.body.quaternion);
   }
 
   // Render
